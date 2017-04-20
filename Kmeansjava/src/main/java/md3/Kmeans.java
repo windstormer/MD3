@@ -1,17 +1,16 @@
 package md3;
 
 import java.io.BufferedReader;
-import java.io.FileReader;
 import java.io.IOException;
 import java.util.*;
 import java.lang.*;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hdfs.server.namenode.INodesInPath;
-import org.apache.hadoop.io.IntWritable;
-import org.apache.hadoop.io.NullWritable;
+import java.io.InputStreamReader;
 import org.apache.hadoop.io.Text;
-import org.apache.hadoop.mapred.TextOutputFormat;
+import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
@@ -29,25 +28,37 @@ public class Kmeans {
 
 		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
 			String centroid = context.getConfiguration().get("centroid");
+			int dis = Integer.parseInt(context.getConfiguration().get("dis"));
 			String[] itr = centroid.split(",");
 			Vector<ArrayList<Double>> cen = new Vector<ArrayList<Double>>();
 			for (int i = 0; i < itr.length; i++) {
-				if (cen.get(i) == null) {
-					cen.add(i, new ArrayList<Double>());
-				}
+				
+				cen.add(i, new ArrayList<Double>());
 				String[] dimension = itr[i].split(" ");
 				for (int j = 0; j < dimension.length; j++) {
 					cen.get(i).add(j, Double.parseDouble(dimension[j]));
 				}
 			}
+			// for(int i=0;i<cen.size();i++)
+			// {
+			// 	StringBuilder builder = new StringBuilder();
+			// for (int j=0;j<cen.get(i).size();j++) {
+			// 	builder.append(cen.get(i).get(j).toString() + ",");
+			// }
+			// 	context.write(new Text(String.valueOf(i)),new Text(builder.toString().substring(0, builder.toString().length() - 1)));
+			// }
 
 			String[] Data = value.toString().split(" ");
 			Double mindis = Double.MAX_VALUE;
-			Double sum = 0.0;
+			
 			int clus = 0;
 			for (int j = 0; j < cen.size(); j++) {
+				Double sum = 0.0;
 				for (int i = 0; i < Data.length; i++) {
-					sum += Double.parseDouble(Data[i]) * cen.get(j).get(i).doubleValue();
+					if(dis==0)
+						sum += Math.pow(Double.parseDouble(Data[i]) - cen.get(j).get(i).doubleValue(),2);
+					else
+						sum += Math.abs(Double.parseDouble(Data[i]) - cen.get(j).get(i).doubleValue());
 				}
 				if (sum < mindis) {
 					mindis = sum;
@@ -60,8 +71,8 @@ public class Kmeans {
 				builder.append(s + ",");
 			}
 			context.write(new Text(String.valueOf(clus)),
-					new Text(builder.toString().substring(0, builder.toString().length() - 1)));
-
+				new Text(builder.toString().substring(0, builder.toString().length() - 1)));
+			// context.write(new Text(String.valueOf(clus)), new Text(String.valueOf(mindis)));
 		}
 	}
 
@@ -82,7 +93,7 @@ public class Kmeans {
 				for (Text val : values) {
 					totalcost += Double.parseDouble(val.toString());
 				}
-				mos.write("cost", new Text(""), new Text(String.valueOf(totalcost)), "cost");
+				mos.write("cost", new Text("cost"), new Text(String.valueOf(totalcost)), "cost");
 			} else {
 				Vector<ArrayList<Double>> clusdata = new Vector<ArrayList<Double>>();
 				for (Text val : values) {
@@ -106,9 +117,11 @@ public class Kmeans {
 				for (int i = 0; i < centroid.size(); i++) {
 					builder.append(String.valueOf(centroid.get(i)) + " ");
 				}
-				mos.write("centroid", new Text(""),
-						new Text(builder.toString().substring(0, builder.toString().length() - 1)),"centroid");
-
+				mos.write("centroid", new Text(builder.toString().substring(0, builder.toString().length() - 1)),
+					new Text(" "),"centroid");
+				
+				// for(Text val: values)
+				// 	mos.write("centroid",key,val,"centroid");
 			}
 		}
 	}
@@ -116,39 +129,60 @@ public class Kmeans {
 	public static void main(String[] args) throws Exception {
 		Configuration conf = new Configuration();
 		String[] otherArgs = new GenericOptionsParser(conf, args).getRemainingArgs();
-		conf.set("mapred.textoutputformat.separator", "");
+		conf.set("mapred.textoutputformat.separator", " ");
 
 		String outpath = "";
-		for (int i = 0; i < Integer.parseInt(otherArgs[2]); i++) {
-			conf = new Configuration(conf);
+		for(int k=0;k<2;k++)
+		{
+			for(int j=0;j<2;j++)
+			{
+				for (int i = 0; i < Integer.parseInt(otherArgs[3]); i++) {
+					conf = new Configuration(conf);
 
-			FileReader fr;
-			if (i == 0)
-				fr = new FileReader(otherArgs[1]);
-			else
-				fr = new FileReader(outpath);
-			BufferedReader br = new BufferedReader(fr);
-			String centroid = "";
-			while (br.ready()) {
-				centroid += br.readLine() + ",";
-			}
-			fr.close();
-			outpath = "/user/root/output/out" + String.valueOf(i + 1) + "/centroid-r-00000";
-			conf.set("centroid", centroid);
-			Job job = Job.getInstance(conf, "Kmeans");
-			job.setJarByClass(Kmeans.class);
-			job.setMapperClass(WClusterMapper.class);
+					FileSystem fs = FileSystem.get(conf);
+					Path pa;
+					if (i == 0)
+					{
+						if(j==0)
+							pa = new Path(otherArgs[1]);
+						else
+							pa = new Path(otherArgs[2]);
+					}
+					else
+						pa = new Path(outpath + "/centroid-r-00000");
+					BufferedReader br = new BufferedReader(new InputStreamReader(fs.open(pa)));
+					String centroid = "";
+					while (br.ready()) {
+						centroid += br.readLine() + ",";
+					}
+					br.close();
+					outpath = "/user/root/output/";
+					if(k==0)
+						outpath += "Eu/";
+					else
+						outpath += "Ma/";
+					if(j==0)
+						outpath += "c1/out" + String.valueOf(i + 1);
+					else
+						outpath += "c2/out" + String.valueOf(i + 1);
+					conf.set("centroid", centroid);
+					conf.set("dis",String.valueOf(k));
+					Job job = Job.getInstance(conf, "Kmeans "+String.valueOf(i));
+					job.setJarByClass(Kmeans.class);
+					job.setMapperClass(WClusterMapper.class);
 			// job.setCombinerClass(IntSumReducer.class);
-			job.setMapOutputKeyClass(Text.class);
-			job.setMapOutputValueClass(Text.class);
-			job.setReducerClass(CentroidReducer.class);
-			job.setOutputKeyClass(Text.class);
-			job.setOutputValueClass(Text.class);
-			MultipleOutputs.addNamedOutput(job, "cost", TextOutputFormat.class, Text.class, Text.class);
-			MultipleOutputs.addNamedOutput(job, "centroid", TextOutputFormat.class, Text.class, Text.class);
-			FileInputFormat.addInputPath(job, new Path(otherArgs[0]));
-			FileOutputFormat.setOutputPath(job, new Path(outpath));
-			job.waitForCompletion(true);
+					job.setMapOutputKeyClass(Text.class);
+					job.setMapOutputValueClass(Text.class);
+					job.setReducerClass(CentroidReducer.class);
+					job.setOutputKeyClass(Text.class);
+					job.setOutputValueClass(Text.class);
+					MultipleOutputs.addNamedOutput(job, "cost", TextOutputFormat.class, Text.class, Text.class);
+					MultipleOutputs.addNamedOutput(job, "centroid", TextOutputFormat.class, Text.class, Text.class);
+					FileInputFormat.addInputPath(job, new Path(otherArgs[0]));
+					FileOutputFormat.setOutputPath(job, new Path(outpath));
+					job.waitForCompletion(true);
+				}
+			}
 		}
 		System.exit(0);
 	}
